@@ -3,7 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"html/template"
+	"text/template"
 	"log"
 	"net/http"
 	"os"
