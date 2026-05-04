@@ -2,20 +2,22 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/proxy-micro/pkg/config"
 	"github.com/proxy-micro/pkg/protocol"
+	"github.com/proxy-micro/pkg/stats"
 )
 
 func main() {
 	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
 
-	// 加载配置
 	cfgPath := "config.json"
 	if len(os.Args) > 1 {
 		cfgPath = os.Args[1]
@@ -31,6 +33,17 @@ func main() {
 		return
 	}
 
+	tracker := &stats.Tracker{}
+
+	// 启动统计 HTTP 服务（内部端口）
+	go func() {
+		statsAddr := ":8089"
+		log.Printf("📊 [HTTP Stats] listening on %s", statsAddr)
+		if err := http.ListenAndServe(statsAddr, tracker.Handler()); err != nil {
+			log.Printf("stats server error: %v", err)
+		}
+	}()
+
 	bind := cfg.Services.HTTPProxy.Bind
 	if bind == "" {
 		bind = ":8080"
@@ -44,7 +57,6 @@ func main() {
 
 	fmt.Printf("🔄 [HTTP Proxy] listening on %s\n", bind)
 
-	// 优雅退出
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 
@@ -62,7 +74,13 @@ func main() {
 
 		go func(c net.Conn) {
 			addr := c.RemoteAddr().String()
+			tracker.AddConn()
+			defer tracker.DoneConn()
+
 			log.Printf("→ [HTTP] new connection from %s", addr)
+
+			// 用 wrapped conn 追踪流量
+			wc := &countingConn{Conn: c, tracker: tracker}
 
 			var auth protocol.HTTPAuthFunc
 			if cfg.Auth.Enabled {
@@ -76,9 +94,30 @@ func main() {
 				}
 			}
 
-			if err := protocol.HandleHTTPProxy(c, auth); err != nil {
+			if err := protocol.HandleHTTPProxy(wc, auth); err != nil {
 				log.Printf("← [HTTP] %s done: %v", addr, err)
 			}
 		}(conn)
 	}
 }
+
+// countingConn 包装 net.Conn 追踪流量
+type countingConn struct {
+	net.Conn
+	tracker *stats.Tracker
+}
+
+func (c *countingConn) Read(b []byte) (int, error) {
+	n, err := c.Conn.Read(b)
+	c.tracker.AddBytes(int64(n), 0)
+	return n, err
+}
+
+func (c *countingConn) Write(b []byte) (int, error) {
+	n, err := c.Conn.Write(b)
+	c.tracker.AddBytes(0, int64(n))
+	return n, err
+}
+
+// 确保实现了 io.ReadWriter
+var _ io.ReadWriter = (*countingConn)(nil)

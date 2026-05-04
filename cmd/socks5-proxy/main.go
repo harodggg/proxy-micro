@@ -2,14 +2,17 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/proxy-micro/pkg/config"
 	"github.com/proxy-micro/pkg/protocol"
+	"github.com/proxy-micro/pkg/stats"
 )
 
 func main() {
@@ -29,6 +32,17 @@ func main() {
 		log.Println("SOCKS5 proxy service is disabled")
 		return
 	}
+
+	tracker := &stats.Tracker{}
+
+	// 启动统计 HTTP 服务（内部端口）
+	go func() {
+		statsAddr := ":1089"
+		log.Printf("📊 [SOCKS5 Stats] listening on %s", statsAddr)
+		if err := http.ListenAndServe(statsAddr, tracker.Handler()); err != nil {
+			log.Printf("stats server error: %v", err)
+		}
+	}()
 
 	bind := cfg.Services.SOCKS5Proxy.Bind
 	if bind == "" {
@@ -60,7 +74,12 @@ func main() {
 
 		go func(c net.Conn) {
 			addr := c.RemoteAddr().String()
+			tracker.AddConn()
+			defer tracker.DoneConn()
+
 			log.Printf("→ [SOCKS5] new connection from %s", addr)
+
+			wc := &countingConn{Conn: c, tracker: tracker}
 
 			var auth protocol.Socks5AuthFunc
 			if cfg.Auth.Enabled {
@@ -74,9 +93,29 @@ func main() {
 				}
 			}
 
-			if err := protocol.HandleSocks5(c, auth); err != nil {
+			if err := protocol.HandleSocks5(wc, auth); err != nil {
 				log.Printf("← [SOCKS5] %s done: %v", addr, err)
 			}
 		}(conn)
 	}
 }
+
+// countingConn 包装 net.Conn 追踪流量
+type countingConn struct {
+	net.Conn
+	tracker *stats.Tracker
+}
+
+func (c *countingConn) Read(b []byte) (int, error) {
+	n, err := c.Conn.Read(b)
+	c.tracker.AddBytes(int64(n), 0)
+	return n, err
+}
+
+func (c *countingConn) Write(b []byte) (int, error) {
+	n, err := c.Conn.Write(b)
+	c.tracker.AddBytes(0, int64(n))
+	return n, err
+}
+
+var _ io.ReadWriter = (*countingConn)(nil)
