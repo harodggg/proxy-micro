@@ -387,7 +387,7 @@ const indexHTML = `<!DOCTYPE html>
   }
 
   fetchStats();
-  setInterval(fetchStats, 1000);
+  setInterval(fetchStats, 200);
   window.addEventListener('resize', drawSparkline);
   </script>
 </body>
@@ -565,7 +565,7 @@ func fetchProxyStats(url string) *ProxyStatsSnapshot {
 // pollProxyStats 定时轮询所有代理服务统计
 func pollProxyStats() {
 	for {
-		time.Sleep(1 * time.Second)
+		time.Sleep(200 * time.Millisecond)
 
 		var totalConns, activeConns, bytesIn, bytesOut int64
 
