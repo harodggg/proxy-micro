@@ -1,0 +1,35 @@
+{
+  "services": {
+    "http_proxy": {
+      "enabled": true,
+      "bind": ":8080"
+    },
+    "socks5_proxy": {
+      "enabled": true,
+      "bind": ":1080"
+    },
+    "admin": {
+      "enabled": true,
+      "bind": ":8088"
+    },
+    "gateway": {
+      "enabled": false,
+      "bind": ":8081"
+    }
+  },
+  "logging": {
+    "level": "info",
+    "output": "stdout"
+  },
+  "auth": {
+    "enabled": false,
+    "users": [
+      { "username": "admin", "password": "proxy123" }
+    ]
+  },
+  "tls": {
+    "enabled": false,
+    "cert_file": "",
+    "key_file": ""
+  }
+}
